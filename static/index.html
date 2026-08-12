@@ -17,10 +17,10 @@
                 <span class="text-3xl">🌾</span>
                 <div>
                     <h1 class="text-2xl font-bold tracking-tight text-emerald-400">AgriVision AI</h1>
-                    <p class="text-xs text-slate-400">Multimodal Crop Health & OOD-Filtered Diagnostic Engine</p>
+                    <p class="text-xs text-slate-400">Multimodal Crop Health & Live Environmental Telemetry</p>
                 </div>
             </div>
-            <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full font-medium">v2.1 Active</span>
+            <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full font-medium">Live System</span>
         </header>
 
         <!-- Main Layout -->
@@ -74,14 +74,7 @@
                     <p class="text-sm">Upload a leaf photo to get instant botanical diagnostics & telemetry.</p>
                 </div>
 
-                <!-- OOD Error View (Rejection Screen) -->
-                <div id="errorState" class="hidden text-center py-12 space-y-3 bg-red-950/30 border border-red-800/40 rounded-2xl p-6">
-                    <span class="text-4xl block">🚫</span>
-                    <h3 class="text-lg font-bold text-red-400">Input Validation Failed</h3>
-                    <p id="errorMessage" class="text-sm text-red-200 max-w-md mx-auto"></p>
-                </div>
-
-                <!-- Success Result View -->
+                <!-- Results View -->
                 <div id="resultState" class="hidden space-y-5">
                     <div class="flex items-center justify-between border-b border-slate-700/70 pb-4">
                         <div>
@@ -111,8 +104,8 @@
                         </div>
 
                         <div class="bg-slate-900/70 border border-slate-700/50 rounded-xl p-3.5">
-                            <span class="text-[11px] text-slate-400 uppercase font-semibold">🛡️ Gatekeeper Status</span>
-                            <div class="text-sm font-semibold text-emerald-400 mt-1">Verified Foliage</div>
+                            <span class="text-[11px] text-slate-400 uppercase font-semibold">⚡ Engine Status</span>
+                            <div class="text-sm font-semibold text-emerald-400 mt-1">Operational</div>
                             <span class="text-xs text-slate-400" id="resLatency">Sub-second</span>
                         </div>
                     </div>
@@ -166,7 +159,7 @@
             }
 
             const btn = document.getElementById('analyzeBtn');
-            btn.innerHTML = '<span>Validating & Diagnosing...</span>';
+            btn.innerHTML = '<span>Analyzing Crop Health...</span>';
             btn.disabled = true;
 
             const formData = new FormData();
@@ -183,35 +176,25 @@
                 const latency = Math.round(performance.now() - startTime);
 
                 document.getElementById('placeholderState').classList.add('hidden');
+                document.getElementById('resultState').classList.remove('hidden');
 
-                if (data.is_valid === false) {
-                    // Show Rejection Error View
-                    document.getElementById('resultState').classList.add('hidden');
-                    document.getElementById('errorState').classList.remove('hidden');
-                    document.getElementById('errorMessage').innerText = data.error_message;
+                document.getElementById('resHealth').innerText = data.crop_health + '%';
+                document.getElementById('resDisease').innerText = data.disease_name;
+                document.getElementById('resConfidence').innerText = data.disease_prob + '% confidence';
+                document.getElementById('resHeat').innerText = data.heat_stress;
+                document.getElementById('resTemp').innerText = data.temperature + '°C Ambient';
+                document.getElementById('resWater').innerText = data.water_stress;
+                document.getElementById('resHum').innerText = data.humidity + '% Humidity';
+                document.getElementById('resLatency').innerText = latency + ' ms latency';
+                document.getElementById('resActionPlan').innerHTML = data.action_plan;
+
+                const badge = document.getElementById('healthBadge');
+                if (data.crop_health > 70) {
+                    badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+                    badge.innerText = 'Good Health';
                 } else {
-                    // Show Diagnostic Results
-                    document.getElementById('errorState').classList.add('hidden');
-                    document.getElementById('resultState').classList.remove('hidden');
-
-                    document.getElementById('resHealth').innerText = data.crop_health + '%';
-                    document.getElementById('resDisease').innerText = data.disease_name;
-                    document.getElementById('resConfidence').innerText = data.disease_prob + '% confidence';
-                    document.getElementById('resHeat').innerText = data.heat_stress;
-                    document.getElementById('resTemp').innerText = data.temperature + '°C Ambient';
-                    document.getElementById('resWater').innerText = data.water_stress;
-                    document.getElementById('resHum').innerText = data.humidity + '% Humidity';
-                    document.getElementById('resLatency').innerText = latency + ' ms latency';
-                    document.getElementById('resActionPlan').innerHTML = data.action_plan;
-
-                    const badge = document.getElementById('healthBadge');
-                    if (data.crop_health > 70) {
-                        badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
-                        badge.innerText = 'Good Health';
-                    } else {
-                        badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30';
-                        badge.innerText = 'Action Needed';
-                    }
+                    badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30';
+                    badge.innerText = 'Action Needed';
                 }
             } catch (err) {
                 alert('Diagnostic error: ' + err.message);
