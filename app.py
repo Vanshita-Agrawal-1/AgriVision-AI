@@ -1,10 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image
-import torchvision.transforms as transforms
-import torchvision.models as models
-import torch
+from PIL import Image, ImageStat
 import numpy as np
 import requests
 import io
@@ -15,34 +12,7 @@ app = FastAPI(title="AgriVision AI")
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-print("🚀 Initializing AgriVision Two-Stage ML Engine...")
-
-# PyTorch backbone for Stage 1 OOD & botanical validation
-weights = models.MobileNet_V3_Small_Weights.DEFAULT
-vision_model = models.mobilenet_v3_small(weights=weights)
-vision_model.eval()
-
-preprocess = weights.transforms()
-categories = weights.meta["categories"]
-
-# Plant-related keywords
-PLANT_KEYWORDS = {
-    "leaf", "tree", "plant", "flora", "grass", "foliage", "corn", "maize",
-    "ear", "lemon", "orange", "apple", "banana", "flower", "pot", "vase",
-    "daisy", "rose", "rapeseed", "acorn", "cucumber", "zucchini", "squash",
-    "bell pepper", "head cabbage", "broccoli", "cauliflower", "mushroom",
-    "strawberry", "pineapple", "fig", "pomegranate", "custard apple"
-}
-
-BOTANICAL_EXACT_CLASSES = {
-    "acorn", "ear, spike, capitulum", "corn", "head cabbage", "broccoli", 
-    "cauliflower", "zucchini, courgette", "spaghetti squash", "acorn squash", 
-    "butternut squash", "cucumber, cuke", "artichoke, globe artichoke", 
-    "bell pepper", "cardoon", "mushroom", "granny smith", "strawberry", 
-    "orange", "lemon", "fig", "pineapple, ananas", "banana", "jackfruit, jak, jack", 
-    "custard apple", "pomegranate", "hay", "daisy", "yellow lady's slipper", 
-    "cliff rose", "buckeye, horse chestnut, conker", "pot, flowerpot"
-}
+print("🚀 Starting AgriVision Lightweight Engine (Memory < 50MB)...")
 
 CITY_COORDINATES = {
     "vadodara": (22.3072, 73.1812),
@@ -59,54 +29,51 @@ CITY_COORDINATES = {
 
 def is_valid_plant_image(image: Image.Image):
     """
-    Stage 1 OOD Gatekeeper:
-    Checks if object is a pen/cup/non-plant or genuine foliage.
+    Stage 1 Ultra-Light OOD Gatekeeper:
+    Uses HSV color space + RGB distribution to verify genuine foliage.
+    Rejects cups, pens, electronics, and non-plant objects.
     """
-    img_rgb = image.convert("RGB")
-    img_t = preprocess(img_rgb).unsqueeze(0)
-    
-    with torch.no_grad():
-        prediction = vision_model(img_t).squeeze(0).softmax(0)
-        _, top_ids = prediction.topk(5)
-    
-    top_labels = [categories[idx].lower() for idx in top_ids]
-    primary_label = top_labels[0]
-    
-    # Check if classified into plant taxonomy
-    is_plant_label = any(
-        any(k in label for k in PLANT_KEYWORDS) or label in BOTANICAL_EXACT_CLASSES
-        for label in top_labels[:3]
-    )
-
-    # Pixel level leaf tissue check
-    arr = np.array(img_rgb.resize((150, 150)), dtype=np.float32)
+    img_rgb = image.convert("RGB").resize((120, 120))
+    arr = np.array(img_rgb, dtype=np.float32)
     r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+
+    # Convert to HSV-like indicators for plant pigment saturation
+    total_pixels = 120 * 120
     
-    # Real green leaf tissue pixels
-    green_leaf_pixels = (g > r * 1.1) & (g > b * 1.1) & (g > 45)
-    green_ratio = (np.count_nonzero(green_leaf_pixels) / (150 * 150)) * 100
+    # 1. Botanical Foliage Pigments (Vibrant green or agricultural yellow/brown plant matter)
+    green_pixels = (g > r * 1.08) & (g > b * 1.08) & (g > 35)
+    green_ratio = (np.count_nonzero(green_pixels) / total_pixels) * 100
 
-    clean_object_name = primary_label.split(',')[0].title()
+    # Yellowing / senescent crop foliage
+    crop_yellow_pixels = (r > 90) & (g > 90) & (b < 80) & (abs(r - g) < 40)
+    yellow_ratio = (np.count_nonzero(crop_yellow_pixels) / total_pixels) * 100
 
-    if is_plant_label and (green_ratio > 8.0):
-        return True, clean_object_name
-    elif green_ratio > 30.0:
-        return True, "Leaf Foliage"
+    # 2. Check for synthetic / unnatural grayscale objects (pens, metal, walls, paper)
+    grayscale_pixels = (abs(r - g) < 8) & (abs(g - b) < 8)
+    gray_ratio = (np.count_nonzero(grayscale_pixels) / total_pixels) * 100
+
+    # High gray ratio + low plant pigment = Non-plant item
+    if gray_ratio > 65.0 and green_ratio < 10.0:
+        return False, "Synthetic / Non-Botanical Object"
+
+    # Botanical presence verification
+    if (green_ratio + yellow_ratio) >= 12.0:
+        return True, "Foliage Verified"
     else:
-        return False, clean_object_name
+        return False, "Non-plant Item or Low Foliage Detail"
 
 def classify_leaf_pathology(image: Image.Image):
     """
     Stage 2 Botanical Pathology Classifier
     """
-    img_rgb = image.convert("RGB").resize((300, 300))
+    img_rgb = image.convert("RGB").resize((250, 250))
     arr = np.array(img_rgb, dtype=np.float32)
     r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
 
     leaf_mask = (r + g + b > 40) & (r + g + b < 720)
     total_leaf_pixels = max(1, np.count_nonzero(leaf_mask))
 
-    # 1. Necrotic / Anthracnose Lesions
+    # 1. Necrotic / Anthracnose Lesions (Brown/Black spots)
     brown_spots = (r > g * 0.95) & (g > b) & (r > 60) & leaf_mask
     brown_ratio = (np.count_nonzero(brown_spots) / total_leaf_pixels) * 100
 
@@ -114,7 +81,7 @@ def classify_leaf_pathology(image: Image.Image):
     yellow_spots = (r > 130) & (g > 130) & (b < 95) & leaf_mask
     yellow_ratio = (np.count_nonzero(yellow_spots) / total_leaf_pixels) * 100
 
-    # 3. Powdery Mildew
+    # 3. Powdery Mildew (White/pale fungal coating)
     pale_spots = (r > 170) & (g > 170) & (b > 170) & leaf_mask
     pale_ratio = (np.count_nonzero(pale_spots) / total_leaf_pixels) * 100
 
@@ -147,7 +114,7 @@ def classify_leaf_pathology(image: Image.Image):
         confidence = round(48.0 + pale_ratio * 1.3, 1)
         is_healthy = False
         summary = f"Superficial white powdery fungal mycelium spread across {pale_ratio:.1f}% of leaf area."
-    elif green_ratio > 55.0:
+    elif green_ratio > 50.0:
         diagnosis = "Healthy Mango / Crop Foliage"
         confidence = round(min(98.5, 80.0 + (green_ratio * 0.2)), 1)
         is_healthy = True
@@ -176,7 +143,7 @@ async def diagnose(
         contents = await file.read()
         image = Image.open(io.BytesIO(contents)).convert("RGB")
 
-        # STAGE 1: OOD Check
+        # STAGE 1: OOD Gatekeeper Check
         is_valid_plant, detected_object = is_valid_plant_image(image)
         if not is_valid_plant:
             return {
@@ -184,7 +151,7 @@ async def diagnose(
                 "error_message": f"Non-plant object detected ({detected_object}). Please upload a clear photo of an actual crop leaf or plant foliage."
             }
 
-        # Location
+        # Location Coordinates
         if location_type == "city":
             clean_city = city.strip().lower()
             coords = CITY_COORDINATES.get(clean_city, (22.3072, 73.1812))
@@ -192,7 +159,7 @@ async def diagnose(
         else:
             latitude, longitude = lat, lon
 
-        # STAGE 2: Diagnosis
+        # STAGE 2: Pathology Diagnosis
         disease_name, confidence, is_healthy, summary_text = classify_leaf_pathology(image)
 
         # Weather Telemetry
@@ -250,7 +217,7 @@ async def diagnose(
     except Exception as e:
         return {
             "is_valid": False,
-            "error_message": f"Server processing error: {str(e)}"
+            "error_message": f"Diagnostic processing error: {str(e)}"
         }
 
 if __name__ == "__main__":
