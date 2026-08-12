@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 import torchvision.transforms as transforms
 import torchvision.models as models
+import torch
 import numpy as np
 import requests
 import io
@@ -14,9 +15,9 @@ app = FastAPI(title="AgriVision AI")
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-print("🚀 Initializing AgriVision Two-Stage ML Architecture...")
+print("🚀 Initializing AgriVision Two-Stage ML Engine...")
 
-# Load standard vision backbone for Stage 1 OOD & botanical validation
+# PyTorch backbone for Stage 1 OOD & botanical validation
 weights = models.MobileNet_V3_Small_Weights.DEFAULT
 vision_model = models.mobilenet_v3_small(weights=weights)
 vision_model.eval()
@@ -24,7 +25,7 @@ vision_model.eval()
 preprocess = weights.transforms()
 categories = weights.meta["categories"]
 
-# Plant-related keywords for Gatekeeper validation
+# Plant-related keywords
 PLANT_KEYWORDS = {
     "leaf", "tree", "plant", "flora", "grass", "foliage", "corn", "maize",
     "ear", "lemon", "orange", "apple", "banana", "flower", "pot", "vase",
@@ -33,7 +34,15 @@ PLANT_KEYWORDS = {
     "strawberry", "pineapple", "fig", "pomegranate", "custard apple"
 }
 
-print("✅ Stage 1 (OOD Gatekeeper) & Stage 2 (Botanical Engine) Ready!")
+BOTANICAL_EXACT_CLASSES = {
+    "acorn", "ear, spike, capitulum", "corn", "head cabbage", "broccoli", 
+    "cauliflower", "zucchini, courgette", "spaghetti squash", "acorn squash", 
+    "butternut squash", "cucumber, cuke", "artichoke, globe artichoke", 
+    "bell pepper", "cardoon", "mushroom", "granny smith", "strawberry", 
+    "orange", "lemon", "fig", "pineapple, ananas", "banana", "jackfruit, jak, jack", 
+    "custard apple", "pomegranate", "hay", "daisy", "yellow lady's slipper", 
+    "cliff rose", "buckeye, horse chestnut, conker", "pot, flowerpot"
+}
 
 CITY_COORDINATES = {
     "vadodara": (22.3072, 73.1812),
@@ -50,38 +59,45 @@ CITY_COORDINATES = {
 
 def is_valid_plant_image(image: Image.Image):
     """
-    Stage 1 OOD Gatekeeper: Validates whether the image contains 
-    genuine plant material or random non-agricultural objects.
+    Stage 1 OOD Gatekeeper:
+    Checks if object is a pen/cup/non-plant or genuine foliage.
     """
-    img_t = preprocess(image).unsqueeze(0)
-    prediction = vision_model(img_t).squeeze(0).softmax(0)
-    top5_prob, top5_cat_id = prediction.topk(5)
+    img_rgb = image.convert("RGB")
+    img_t = preprocess(img_rgb).unsqueeze(0)
     
-    top_labels = [categories[cat_id].lower() for cat_id in top5_cat_id]
+    with torch.no_grad():
+        prediction = vision_model(img_t).squeeze(0).softmax(0)
+        _, top_ids = prediction.topk(5)
     
-    # Check if any top prediction matches botanical / crop classes
-    is_plant_class = any(
-        any(k in label for k in PLANT_KEYWORDS)
-        for label in top_labels
+    top_labels = [categories[idx].lower() for idx in top_ids]
+    primary_label = top_labels[0]
+    
+    # Check if classified into plant taxonomy
+    is_plant_label = any(
+        any(k in label for k in PLANT_KEYWORDS) or label in BOTANICAL_EXACT_CLASSES
+        for label in top_labels[:3]
     )
-    
-    # Fallback botanical color check (prevents false rejections of close-up single leaves)
-    img_rgb = image.convert("RGB").resize((100, 100))
-    arr = np.array(img_rgb, dtype=np.float32)
+
+    # Pixel level leaf tissue check
+    arr = np.array(img_rgb.resize((150, 150)), dtype=np.float32)
     r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
     
-    green_dominance = (g > r) & (g > b) & (g > 35)
-    green_pixel_ratio = (np.count_nonzero(green_dominance) / (100 * 100)) * 100
-    
-    is_botanical = is_plant_class or (green_pixel_ratio > 18.0)
-    detected_object = top_labels[0].title()
-    
-    return is_botanical, detected_object
+    # Real green leaf tissue pixels
+    green_leaf_pixels = (g > r * 1.1) & (g > b * 1.1) & (g > 45)
+    green_ratio = (np.count_nonzero(green_leaf_pixels) / (150 * 150)) * 100
+
+    clean_object_name = primary_label.split(',')[0].title()
+
+    if is_plant_label and (green_ratio > 8.0):
+        return True, clean_object_name
+    elif green_ratio > 30.0:
+        return True, "Leaf Foliage"
+    else:
+        return False, clean_object_name
 
 def classify_leaf_pathology(image: Image.Image):
     """
-    Stage 2 Botanical Pathology Classifier: Detects specific disease 
-    patterns, lesions, chlorosis, and vigor scores.
+    Stage 2 Botanical Pathology Classifier
     """
     img_rgb = image.convert("RGB").resize((300, 300))
     arr = np.array(img_rgb, dtype=np.float32)
@@ -90,15 +106,15 @@ def classify_leaf_pathology(image: Image.Image):
     leaf_mask = (r + g + b > 40) & (r + g + b < 720)
     total_leaf_pixels = max(1, np.count_nonzero(leaf_mask))
 
-    # 1. Necrotic / Anthracnose Lesions (Dark brown/black spots)
+    # 1. Necrotic / Anthracnose Lesions
     brown_spots = (r > g * 0.95) & (g > b) & (r > 60) & leaf_mask
     brown_ratio = (np.count_nonzero(brown_spots) / total_leaf_pixels) * 100
 
-    # 2. Chlorosis / Yellow Rust / Mosaic (Yellow patches)
+    # 2. Chlorosis / Yellow Rust
     yellow_spots = (r > 130) & (g > 130) & (b < 95) & leaf_mask
     yellow_ratio = (np.count_nonzero(yellow_spots) / total_leaf_pixels) * 100
 
-    # 3. Powdery Mildew (White/pale fungal coating)
+    # 3. Powdery Mildew
     pale_spots = (r > 170) & (g > 170) & (b > 170) & leaf_mask
     pale_ratio = (np.count_nonzero(pale_spots) / total_leaf_pixels) * 100
 
@@ -106,7 +122,6 @@ def classify_leaf_pathology(image: Image.Image):
     pure_green = (g > r + 15) & (g > b + 15) & leaf_mask
     green_ratio = (np.count_nonzero(pure_green) / total_leaf_pixels) * 100
 
-    # Multi-class disease determination
     if brown_ratio > 18.0:
         diagnosis = "Foliar Anthracnose / Necrotic Blight"
         confidence = min(96.0, round(58.0 + brown_ratio * 1.4, 1))
@@ -157,81 +172,86 @@ async def diagnose(
     lat: float = Form(22.3072),
     lon: float = Form(73.1812)
 ):
-    # Read Image
-    contents = await file.read()
-    image = Image.open(io.BytesIO(contents))
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
 
-    # STAGE 1: OOD / Fake Plant Gatekeeper Check
-    is_valid_plant, detected_object = is_valid_plant_image(image)
-    if not is_valid_plant:
+        # STAGE 1: OOD Check
+        is_valid_plant, detected_object = is_valid_plant_image(image)
+        if not is_valid_plant:
+            return {
+                "is_valid": False,
+                "error_message": f"Non-plant object detected ({detected_object}). Please upload a clear photo of an actual crop leaf or plant foliage."
+            }
+
+        # Location
+        if location_type == "city":
+            clean_city = city.strip().lower()
+            coords = CITY_COORDINATES.get(clean_city, (22.3072, 73.1812))
+            latitude, longitude = coords[0], coords[1]
+        else:
+            latitude, longitude = lat, lon
+
+        # STAGE 2: Diagnosis
+        disease_name, confidence, is_healthy, summary_text = classify_leaf_pathology(image)
+
+        # Weather Telemetry
+        try:
+            weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,relative_humidity_2m"
+            weather_res = requests.get(weather_url, timeout=4).json()
+            curr_temp = weather_res['current']['temperature_2m']
+            curr_hum = weather_res['current']['relative_humidity_2m']
+        except Exception:
+            curr_temp, curr_hum = 32.0, 52.0
+
+        # Stress factors
+        if curr_temp > 35:
+            heat_stress, heat_penalty = "High 🔥", 15
+        elif curr_temp > 28:
+            heat_stress, heat_penalty = "Moderate 🌤️", 5
+        else:
+            heat_stress, heat_penalty = "Low 🟢", 0
+
+        if curr_hum < 35:
+            water_stress, water_penalty = "High (Dry) 🌵", 15
+        elif curr_hum < 60:
+            water_stress, water_penalty = "Moderate 💧", 5
+        else:
+            water_stress, water_penalty = "Low (Optimal) 🟢", 0
+
+        disease_penalty = 0 if is_healthy else (confidence * 0.5)
+        crop_health = max(15, int(100 - disease_penalty - heat_penalty - water_penalty))
+
+        if is_healthy:
+            action_plan = (
+                f"**Vitality Report:** {summary_text}<br><br>"
+                f"**Action Plan:** Current ambient temperature is {curr_temp}°C with {curr_hum}% humidity. "
+                f"Crop is performing optimally. Continue routine irrigation."
+            )
+        else:
+            action_plan = (
+                f"**Diagnostic Finding:** {summary_text}<br><br>"
+                f"**Action Plan:** Identified risk of **{disease_name}** ({confidence}% confidence). "
+                f"Thermal stress is **{heat_stress}** ({curr_temp}°C). Apply targeted bio-fungicide or foliar spray and irrigate during cooler evening hours."
+            )
+
+        return {
+            "is_valid": True,
+            "crop_health": crop_health,
+            "disease_name": disease_name,
+            "disease_prob": confidence,
+            "is_healthy": is_healthy,
+            "temperature": curr_temp,
+            "humidity": curr_hum,
+            "heat_stress": heat_stress,
+            "water_stress": water_stress,
+            "action_plan": action_plan
+        }
+    except Exception as e:
         return {
             "is_valid": False,
-            "error_message": f"Non-plant object detected ({detected_object}). Please upload a clear photo of an actual plant leaf or crop foliage."
+            "error_message": f"Server processing error: {str(e)}"
         }
-
-    # Resolve Coordinates
-    if location_type == "city":
-        clean_city = city.strip().lower()
-        coords = CITY_COORDINATES.get(clean_city, (22.3072, 73.1812))
-        latitude, longitude = coords[0], coords[1]
-    else:
-        latitude, longitude = lat, lon
-
-    # STAGE 2: Botanical Pathology Diagnosis
-    disease_name, confidence, is_healthy, summary_text = classify_leaf_pathology(image)
-
-    # Weather Telemetry
-    try:
-        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,relative_humidity_2m"
-        weather_res = requests.get(weather_url, timeout=5).json()
-        curr_temp = weather_res['current']['temperature_2m']
-        curr_hum = weather_res['current']['relative_humidity_2m']
-    except Exception:
-        curr_temp, curr_hum = 32.0, 52.0
-
-    # Stress Factors
-    if curr_temp > 35:
-        heat_stress, heat_penalty = "High 🔥", 15
-    elif curr_temp > 28:
-        heat_stress, heat_penalty = "Moderate 🌤️", 5
-    else:
-        heat_stress, heat_penalty = "Low 🟢", 0
-
-    if curr_hum < 35:
-        water_stress, water_penalty = "High (Dry) 🌵", 15
-    elif curr_hum < 60:
-        water_stress, water_penalty = "Moderate 💧", 5
-    else:
-        water_stress, water_penalty = "Low (Optimal) 🟢", 0
-
-    disease_penalty = 0 if is_healthy else (confidence * 0.5)
-    crop_health = max(15, int(100 - disease_penalty - heat_penalty - water_penalty))
-
-    if is_healthy:
-        action_plan = (
-            f"**Vitality Report:** {summary_text}<br><br>"
-            f"**Action Plan:** Current ambient temperature is {curr_temp}°C with {curr_hum}% humidity. "
-            f"Crop is performing optimally. Continue routine micro-irrigation."
-        )
-    else:
-        action_plan = (
-            f"**Diagnostic Finding:** {summary_text}<br><br>"
-            f"**Action Plan:** Identified risk of **{disease_name}** ({confidence}% confidence). "
-            f"Thermal stress is **{heat_stress}** ({curr_temp}°C). Apply targeted bio-fungicide or Copper Oxychloride spray and irrigate during cooler evening hours."
-        )
-
-    return {
-        "is_valid": True,
-        "crop_health": crop_health,
-        "disease_name": disease_name,
-        "disease_prob": confidence,
-        "is_healthy": is_healthy,
-        "temperature": curr_temp,
-        "humidity": curr_hum,
-        "heat_stress": heat_stress,
-        "water_stress": water_stress,
-        "action_plan": action_plan
-    }
 
 if __name__ == "__main__":
     import uvicorn
