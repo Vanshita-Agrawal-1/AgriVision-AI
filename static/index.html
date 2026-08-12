@@ -17,22 +17,21 @@
                 <span class="text-3xl">🌾</span>
                 <div>
                     <h1 class="text-2xl font-bold tracking-tight text-emerald-400">AgriVision AI</h1>
-                    <p class="text-xs text-slate-400">Multimodal Leaf Health & Stress Diagnostic Engine</p>
+                    <p class="text-xs text-slate-400">Multimodal Crop Health & OOD-Filtered Diagnostic Engine</p>
                 </div>
             </div>
-            <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full font-medium">v2.0 Ready</span>
+            <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full font-medium">v2.1 Active</span>
         </header>
 
         <!-- Main Layout -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
             
-            <!-- Left Panel: User Controls -->
+            <!-- Left Controls -->
             <div class="lg:col-span-5 bg-slate-800/60 border border-slate-700/60 rounded-2xl p-6 backdrop-blur space-y-5">
                 <h2 class="text-base font-semibold text-slate-200">1. Upload Leaf & Select Farm Location</h2>
                 
-                <!-- Leaf Upload -->
                 <div>
-                    <label class="block text-xs font-medium uppercase tracking-wider text-slate-400 mb-2">Leaf Image</label>
+                    <label class="block text-xs font-medium uppercase tracking-wider text-slate-400 mb-2">Leaf Photo</label>
                     <input type="file" id="imageInput" accept="image/*" class="block w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer border border-slate-700 rounded-xl bg-slate-900/50 p-1.5"/>
                 </div>
 
@@ -40,10 +39,8 @@
                     <img id="imagePreview" src="" alt="Preview" class="w-full h-full object-cover">
                 </div>
 
-                <!-- Easy Location Selection -->
                 <div class="space-y-3">
                     <label class="block text-xs font-medium uppercase tracking-wider text-slate-400">Farm Location</label>
-                    
                     <div class="grid grid-cols-2 gap-2">
                         <select id="citySelect" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
                             <option value="vadodara" selected>Vadodara (Gujarat)</option>
@@ -56,7 +53,6 @@
                             <option value="bengaluru">Bengaluru (Karnataka)</option>
                             <option value="punjab (ludhiana)">Punjab (Ludhiana)</option>
                         </select>
-
                         <button type="button" onclick="autoDetectGPS()" class="bg-slate-700/60 hover:bg-slate-700 border border-slate-600 rounded-xl px-3 py-2 text-xs font-medium text-slate-300 flex items-center justify-center space-x-1">
                             <span>📍 Use My GPS</span>
                         </button>
@@ -69,13 +65,23 @@
                 </button>
             </div>
 
-            <!-- Right Panel: Diagnostics Result -->
+            <!-- Right Diagnostic View -->
             <div class="lg:col-span-7 bg-slate-800/60 border border-slate-700/60 rounded-2xl p-6 backdrop-blur flex flex-col justify-center min-h-[420px]">
+                
+                <!-- Placeholder -->
                 <div id="placeholderState" class="text-center py-16 text-slate-500">
                     <span class="text-4xl block mb-2">🌱</span>
-                    <p class="text-sm">Upload a leaf photo to get instant botanical diagnosis and stress telemetry.</p>
+                    <p class="text-sm">Upload a leaf photo to get instant botanical diagnostics & telemetry.</p>
                 </div>
 
+                <!-- OOD Error View (Rejection Screen) -->
+                <div id="errorState" class="hidden text-center py-12 space-y-3 bg-red-950/30 border border-red-800/40 rounded-2xl p-6">
+                    <span class="text-4xl block">🚫</span>
+                    <h3 class="text-lg font-bold text-red-400">Input Validation Failed</h3>
+                    <p id="errorMessage" class="text-sm text-red-200 max-w-md mx-auto"></p>
+                </div>
+
+                <!-- Success Result View -->
                 <div id="resultState" class="hidden space-y-5">
                     <div class="flex items-center justify-between border-b border-slate-700/70 pb-4">
                         <div>
@@ -85,7 +91,6 @@
                         <div id="healthBadge" class="px-3 py-1 rounded-full text-xs font-semibold"></div>
                     </div>
 
-                    <!-- Diagnostics Grid -->
                     <div class="grid grid-cols-2 gap-3">
                         <div class="bg-slate-900/70 border border-slate-700/50 rounded-xl p-3.5">
                             <span class="text-[11px] text-slate-400 uppercase font-semibold">🦠 Botanical Diagnosis</span>
@@ -106,13 +111,12 @@
                         </div>
 
                         <div class="bg-slate-900/70 border border-slate-700/50 rounded-xl p-3.5">
-                            <span class="text-[11px] text-slate-400 uppercase font-semibold">⚡ Diagnostic Speed</span>
-                            <div class="text-sm font-semibold text-emerald-400 mt-1" id="resLatency">Sub-second</div>
-                            <span class="text-xs text-slate-400">FastAPI ML Core</span>
+                            <span class="text-[11px] text-slate-400 uppercase font-semibold">🛡️ Gatekeeper Status</span>
+                            <div class="text-sm font-semibold text-emerald-400 mt-1">Verified Foliage</div>
+                            <span class="text-xs text-slate-400" id="resLatency">Sub-second</span>
                         </div>
                     </div>
 
-                    <!-- AI Action Plan -->
                     <div class="bg-emerald-950/40 border border-emerald-800/40 rounded-xl p-4 text-emerald-200 text-sm leading-relaxed" id="resActionPlan"></div>
                 </div>
             </div>
@@ -139,7 +143,7 @@
 
         function autoDetectGPS() {
             if (navigator.geolocation) {
-                locationStatus.innerText = "Fetching current GPS coordinates...";
+                locationStatus.innerText = "Fetching GPS coordinates...";
                 navigator.geolocation.getCurrentPosition(
                     (pos) => {
                         userLat = pos.coords.latitude;
@@ -147,12 +151,10 @@
                         useGPS = true;
                         locationStatus.innerText = `GPS Active (${userLat.toFixed(2)}, ${userLon.toFixed(2)})`;
                     },
-                    (err) => {
+                    () => {
                         locationStatus.innerText = "Location permission denied. Using selected city.";
                     }
                 );
-            } else {
-                locationStatus.innerText = "Geolocation not supported by browser.";
             }
         }
 
@@ -164,7 +166,7 @@
             }
 
             const btn = document.getElementById('analyzeBtn');
-            btn.innerHTML = '<span>Diagnosing...</span>';
+            btn.innerHTML = '<span>Validating & Diagnosing...</span>';
             btn.disabled = true;
 
             const formData = new FormData();
@@ -181,25 +183,35 @@
                 const latency = Math.round(performance.now() - startTime);
 
                 document.getElementById('placeholderState').classList.add('hidden');
-                document.getElementById('resultState').classList.remove('hidden');
 
-                document.getElementById('resHealth').innerText = data.crop_health + '%';
-                document.getElementById('resDisease').innerText = data.disease_name;
-                document.getElementById('resConfidence').innerText = data.disease_prob + '% match';
-                document.getElementById('resHeat').innerText = data.heat_stress;
-                document.getElementById('resTemp').innerText = data.temperature + '°C Ambient';
-                document.getElementById('resWater').innerText = data.water_stress;
-                document.getElementById('resHum').innerText = data.humidity + '% Humidity';
-                document.getElementById('resLatency').innerText = latency + ' ms';
-                document.getElementById('resActionPlan').innerHTML = data.action_plan;
-
-                const badge = document.getElementById('healthBadge');
-                if (data.crop_health > 70) {
-                    badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
-                    badge.innerText = 'Good Health';
+                if (data.is_valid === false) {
+                    // Show Rejection Error View
+                    document.getElementById('resultState').classList.add('hidden');
+                    document.getElementById('errorState').classList.remove('hidden');
+                    document.getElementById('errorMessage').innerText = data.error_message;
                 } else {
-                    badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30';
-                    badge.innerText = 'Action Needed';
+                    // Show Diagnostic Results
+                    document.getElementById('errorState').classList.add('hidden');
+                    document.getElementById('resultState').classList.remove('hidden');
+
+                    document.getElementById('resHealth').innerText = data.crop_health + '%';
+                    document.getElementById('resDisease').innerText = data.disease_name;
+                    document.getElementById('resConfidence').innerText = data.disease_prob + '% confidence';
+                    document.getElementById('resHeat').innerText = data.heat_stress;
+                    document.getElementById('resTemp').innerText = data.temperature + '°C Ambient';
+                    document.getElementById('resWater').innerText = data.water_stress;
+                    document.getElementById('resHum').innerText = data.humidity + '% Humidity';
+                    document.getElementById('resLatency').innerText = latency + ' ms latency';
+                    document.getElementById('resActionPlan').innerHTML = data.action_plan;
+
+                    const badge = document.getElementById('healthBadge');
+                    if (data.crop_health > 70) {
+                        badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+                        badge.innerText = 'Good Health';
+                    } else {
+                        badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30';
+                        badge.innerText = 'Action Needed';
+                    }
                 }
             } catch (err) {
                 alert('Diagnostic error: ' + err.message);
